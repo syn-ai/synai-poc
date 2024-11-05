@@ -1,53 +1,59 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
+#[cfg(feature = "std")]
 
 extern crate alloc;
 use alloc::{vec, vec::Vec};
+use frame_system::*;
 use pallet_grandpa::AuthorityId as GrandpaId;
-use sp_api::impl_runtime_apis;
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
-use sp_core::{crypto::KeyTypeId, OpaqueMetadata};
+use sp_core:: { crypto::KeyTypeId, OpaqueMetadata };
 use sp_runtime::{
-	create_runtime_str, generic, impl_opaque_keys,
-	traits::{BlakeTwo256, Block as BlockT, IdentifyAccount, NumberFor, One, Verify},
+	create_runtime_str, generic, impl_opaque_keys, 
+	traits::{BlakeTwo256, Block as BlockT, IdentifyAccount, NumberFor, One, Verify, IdentityLookup, AccountIdLookup},
 	transaction_validity::{TransactionSource, TransactionValidity},
-	ApplyExtrinsicResult, MultiSignature,
+	ApplyExtrinsicResult, MultiSignature, Perbill, Permill, BuildStorage,
 };
-#[cfg(feature = "std")]
-use sp_version::NativeVersion;
-use sp_version::RuntimeVersion;
-
-pub use frame_support::{
-	construct_runtime, derive_impl, parameter_types,
+use sp_api::impl_runtime_apis;
+use frame_support::traits::{ Everything, PalletInfo };
+use pallet_transaction_payment::{ 
+	Multiplier, 
+	FungibleAdapter, 
+	ConstFeeMultiplier 
+};
+use frame_support::pallet_prelude::Get;
+use crate::runtime::Aura;
+use crate::runtime::System;
+use frame_support::{
+	construct_runtime, derive_impl,
+	parameter_types,
 	traits::{
-		ConstBool, ConstU128, ConstU32, ConstU64, ConstU8, KeyOwnerProofSystem, Randomness,
-		StorageInfo,
+		ConstBool, ConstU8, ConstU32, ConstU64, ConstU128,
+		KeyOwnerProofSystem, Randomness, StorageInfo,
 	},
 	weights::{
-		constants::{
-			BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight, WEIGHT_REF_TIME_PER_SECOND,
-		},
+		constants::{BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight, WEIGHT_REF_TIME_PER_SECOND},
 		IdentityFee, Weight,
 	},
 	StorageValue,
 };
+
+#[cfg(feature = "std")]
+use sp_version::NativeVersion;
+use sp_version::RuntimeVersion;
+
 use frame_support::{
 	genesis_builder_helper::{build_state, get_preset},
 	traits::VariantCountOf,
 };
+
 pub use frame_system::Call as SystemCall;
 pub use pallet_balances::Call as BalancesCall;
 pub use pallet_timestamp::Call as TimestampCall;
-use pallet_transaction_payment::{ConstFeeMultiplier, FungibleAdapter, Multiplier};
-#[cfg(any(feature = "std", test))]
-pub use sp_runtime::BuildStorage;
-pub use sp_runtime::{Perbill, Permill};
-
 /// Import the template pallet.
 pub use pallet_template;
-
+#[cfg(any(feature = "std", test))]
 /// An index to a block.
 pub type BlockNumber = u32;
 
@@ -147,10 +153,17 @@ parameter_types! {
 	pub BlockLength: frame_system::limits::BlockLength = frame_system::limits::BlockLength
 		::max_with_normal_ratio(5 * 1024 * 1024, NORMAL_DISPATCH_RATIO);
 	pub const SS58Prefix: u8 = 42;
+	pub const MaxEmbeddingSize: u32 = 1024;
+	pub const MaxTags: u32 = 10;
+	pub const MaxAuthorities: u32 = 32;
+	pub const SlotDuration: u64 = SLOT_DURATION;
+	pub const AllowMultipleBlocksPerSlot: bool = false;
+	pub const OperationalFeeMultiplier: u8 = 5;
+	pub FeeMultiplier: Multiplier = Multiplier::one();
 }
 
 /// The default types are being injected by [`derive_impl`](`frame_support::derive_impl`) from
-/// [`SoloChainDefaultConfig`](`struct@frame_system::config_preludes::SolochainDefaultConfig`),
+/// [`TestDefaultConfig`](`struct@frame_system::config_preludes::TestDefaultConfig`),
 /// but overridden as needed.
 #[derive_impl(frame_system::config_preludes::SolochainDefaultConfig)]
 impl frame_system::Config for Runtime {
@@ -176,7 +189,35 @@ impl frame_system::Config for Runtime {
 	type AccountData = pallet_balances::AccountData<Balance>;
 	/// This is used as an identifier of the chain. 42 is the generic substrate prefix.
 	type SS58Prefix = SS58Prefix;
+
 	type MaxConsumers = frame_support::traits::ConstU32<16>;
+
+	/// The basic call filter to use in dispatchable.
+	type BaseCallFilter = Everything;
+	/// Block & extrinsics weights: base values and limits.
+	type RuntimeCall = RuntimeCall;
+	/// The lookup mechanism to get account ID from whatever is passed in dispatchers.
+	type Lookup = IdentityLookup<Self::AccountId>;
+	/// The type for storing how many extrinsics an account has signed.
+	type Hashing = BlakeTwo256;
+	/// The block type.
+	type Block = Block;
+	/// The ubiquitous origin type.
+	type RuntimeOrigin = RuntimeOrigin;
+	/// Maximum number of block number to block hash mappings to keep (oldest pruned first).
+	type PalletInfo = PalletInfo;
+	/// What to do if a new account is created.
+	type OnNewAccount = ();
+	/// What to do if an account is fully reaped from the system.
+	type OnKilledAccount = ();
+	/// The data to be stored in an account.
+	type SystemWeightInfo = frame_system::weights::SubstrateWeight<Runtime>;
+	/// The set code logic.
+	type OnSetCode = ();
+	/// The maximum number of consumers allowed on a single account.
+	type MaxConsumers = ConstU32<16>;
+	/// The event type.
+	type RuntimeEvent = RuntimeEvent;
 }
 
 impl pallet_aura::Config for Runtime {
@@ -253,7 +294,17 @@ impl pallet_template::Config for Runtime {
 	type WeightInfo = pallet_template::weights::SubstrateWeight<Runtime>;
 }
 
-// Create the runtime by composing the FRAME pallets that were previously configured.
+/// Configure the pallet_embeddings in pallets/embeddings
+impl pallet_embeddings::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type MaxEmbeddingSize = MaxEmbeddingSize;
+    type MaxTags = MaxTags;
+}
+
+
+
+
+
 #[frame_support::runtime]
 mod runtime {
 	#[runtime::runtime]
@@ -294,6 +345,9 @@ mod runtime {
 	// Include the custom logic from the pallet-template in the runtime.
 	#[runtime::pallet_index(7)]
 	pub type TemplateModule = pallet_template;
+
+    #[runtime::pallet_index(8)]
+    pub type Embeddings = pallet_embeddings::Pallet<Runtime>;
 }
 
 /// The address format for describing accounts.
@@ -314,6 +368,7 @@ pub type SignedExtra = (
 	pallet_transaction_payment::ChargeTransactionPayment<Runtime>,
 );
 
+
 /// All migrations of the runtime, aside from the ones declared in the pallets.
 ///
 /// This can be a tuple of types, each implementing `OnRuntimeUpgrade`.
@@ -321,31 +376,44 @@ pub type SignedExtra = (
 type Migrations = ();
 
 /// Unchecked extrinsic type as expected by this runtime.
-pub type UncheckedExtrinsic =
-	generic::UncheckedExtrinsic<Address, RuntimeCall, Signature, SignedExtra>;
+pub type UncheckedExtrinsic = generic::UncheckedExtrinsic<Address, RuntimeCall, Signature, SignedExtra>;
 /// The payload being signed in transactions.
-pub type SignedPayload = generic::SignedPayload<RuntimeCall, SignedExtra>;
+pub type SignedPayload<RuntimeCall> = generic::SignedPayload<RuntimeCall, SignedExtra>;
 /// Executive: handles dispatch to the various modules.
 pub type Executive = frame_executive::Executive<
 	Runtime,
 	Block,
 	frame_system::ChainContext<Runtime>,
 	Runtime,
-	AllPalletsWithSystem,
 	Migrations,
 >;
 
+
 #[cfg(feature = "runtime-benchmarks")]
 mod benches {
-	frame_benchmarking::define_benchmarks!(
-		[frame_benchmarking, BaselineBench::<Runtime>]
-		[frame_system, SystemBench::<Runtime>]
-		[pallet_balances, Balances]
-		[pallet_timestamp, Timestamp]
-		[pallet_sudo, Sudo]
-		[pallet_template, TemplateModule]
-	);
+	use super::*;
+	use frame_benchmarking::v2::*;
+	use frame_system_benchmarking::Pallet as SystemBench;
+
+	impl frame_system_benchmarking::Config for Runtime {}
+
+	pub fn get_benchmark_list() -> Vec<&'static BenchmarkList> {
+		vec![
+			frame_system::Pallet::<Runtime>::benchmarks(),
+			pallet_balances::Pallet::<Runtime>::benchmarks(),
+			pallet_timestamp::Pallet::<Runtime>::benchmarks(),
+			pallet_template::Pallet::<Runtime>::benchmarks(),
+		]
+	}
 }
+
+// Make sure these are defined before impl_runtime_apis!
+pub use runtime::Runtime;
+pub use runtime::RuntimeCall;
+pub use runtime::RuntimeEvent;
+
+#[cfg(feature = "std")]
+pub type RuntimeGenesisConfig = frame_system::GenesisConfig<Runtime>;
 
 impl_runtime_apis! {
 	impl sp_api::Core<Block> for Runtime {
@@ -354,15 +422,67 @@ impl_runtime_apis! {
 		}
 
 		fn execute_block(block: Block) {
-			Executive::execute_block(block);
+				Executive::execute_block(block);
 		}
 
 		fn initialize_block(header: &<Block as BlockT>::Header) -> sp_runtime::ExtrinsicInclusionMode {
 			Executive::initialize_block(header)
 		}
 	}
+		
+	impl pallet_embeddings_rpc_runtime_api::EmbeddingsApi<Block, AccountId> for Runtime {
+				fn get_embedding(embedding_id: u64) -> Option<(Vec<u8>, Vec<u8>, Vec<Vec<u8>>)> {
+					if let Some((embedding, metadata)) = Embeddings::get_embedding(embedding_id) {
+						Some((
+							embedding.vector.to_vec(),
+							metadata.description.to_vec(),
+							metadata.tags.into_iter().map(|t| t.to_vec()).collect()
+						))
+					} else {
+						None
+					}
+				}
+		
+				fn get_embeddings_by_owner(owner: AccountId) -> Vec<(u64, Vec<u8>, Vec<u8>, Vec<Vec<u8>>)> {
+					Embeddings::get_embeddings_by_owner(owner)
+						.into_iter()
+						.map(|(id, embedding, metadata)| (
+							id,
+							embedding.vector.to_vec(),
+							metadata.description.to_vec(),
+							metadata.tags.into_iter().map(|t| t.to_vec()).collect()
+						))
+						.collect()
+				}
+		
+				fn search_embeddings_by_tag(tag: Vec<u8>) -> Vec<(u64, Vec<u8>, Vec<u8>, Vec<Vec<u8>>)> {
+					Embeddings::search_embeddings_by_tag(tag)
+						.into_iter()
+						.map(|(id, embedding, metadata)| (
+							id,
+							embedding.vector.to_vec(),
+							metadata.description.to_vec(),
+							metadata.tags.into_iter().map(|t| t.to_vec()).collect()
+						))
+						.collect()
+				}
+		
+				fn search_embeddings_by_tags(tags: Vec<Vec<u8>>) -> Vec<(u64, Vec<u8>, Vec<u8>, Vec<Vec<u8>>)> {
+					Embeddings::search_embeddings_by_tags(tags)
+						.into_iter()
+						.map(|(id, embedding, metadata)| (
+							id,
+							embedding.vector.to_vec(),
+							metadata.description.to_vec(),
+							metadata.tags.into_iter().map(|t| t.to_vec()).collect()
+						))
+						.collect()
+				}
+			}
+	
 
 	impl sp_api::Metadata<Block> for Runtime {
+		
 		fn metadata() -> OpaqueMetadata {
 			OpaqueMetadata::new(Runtime::metadata().into())
 		}
@@ -419,7 +539,7 @@ impl_runtime_apis! {
 		}
 
 		fn authorities() -> Vec<AuraId> {
-			pallet_aura::Authorities::<Runtime>::get().into_inner()
+			Aura::authorities().into_inner()
 		}
 	}
 
@@ -472,10 +592,7 @@ impl_runtime_apis! {
 	}
 
 	impl pallet_transaction_payment_rpc_runtime_api::TransactionPaymentApi<Block, Balance> for Runtime {
-		fn query_info(
-			uxt: <Block as BlockT>::Extrinsic,
-			len: u32,
-		) -> pallet_transaction_payment_rpc_runtime_api::RuntimeDispatchInfo<Balance> {
+		fn query_info(uxt: <Block as BlockT>::Extrinsic, len: u32) -> RuntimeDispatchInfo<Balance> {
 			TransactionPayment::query_info(uxt, len)
 		}
 		fn query_fee_details(
@@ -580,15 +697,18 @@ impl_runtime_apis! {
 
 	impl sp_genesis_builder::GenesisBuilder<Block> for Runtime {
 		fn build_state(config: Vec<u8>) -> sp_genesis_builder::Result {
-			build_state::<RuntimeGenesisConfig>(config)
+			let genesis_config = RuntimeGenesisConfig::default();
+			genesis_config.build_storage().map_err(|e| e.to_string())?;
+			Ok(())
 		}
 
-		fn get_preset(id: &Option<sp_genesis_builder::PresetId>) -> Option<Vec<u8>> {
-			get_preset::<RuntimeGenesisConfig>(id, |_| None)
+		fn get_preset(_id: &Option<sp_genesis_builder::PresetId>) -> Option<Vec<u8>> {
+			None
 		}
 
-		fn preset_names() -> Vec<sp_genesis_builder::PresetId> {
-			vec![]
-		}
+			fn preset_names() -> Vec<sp_genesis_builder::PresetId> {
+				vec![]
+			}
 	}
 }
+
