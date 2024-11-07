@@ -273,34 +273,31 @@ pub mod pallet {
 		}
 	}
 
-	// Define a type alias for the vector data structure
+	/// Storage type definitions for the pallet
+	/// WeightData is a tuple containing:
+	/// - Vector data (bounded by MaxVectorLength)
+	/// - Author's account ID
+	/// - List of tag references (bounded by MaxTagsPerVector)
 	type WeightData<T> = (
 		BoundedVec<u8, <T as Config>::MaxVectorLength>,
 		<T as frame_system::Config>::AccountId,
 		BoundedVec<<T as frame_system::Config>::Hash, <T as Config>::MaxTagsPerVector>
 	);
 
+	/// Main storage for vector data, mapping vector IDs to WeightData
 	#[pallet::storage]
-	pub type Vectors<T: Config> = StorageMap<
-		_,
-		Blake2_128Concat,
-		T::Hash,
-		WeightData<T>,
-	>;
+	pub type Vectors<T: Config> = StorageMap<_, Blake2_128Concat, T::Hash, WeightData<T>>;
 
+	/// Storage for tags, mapping tag hashes to tag content
 	#[pallet::storage]
-	pub type Tags<T: Config> = StorageMap<
-		_,
-		Blake2_128Concat,
-		T::Hash,
-		BoundedVec<u8, T::MaxTagLength>,
-	>;
+	pub type Tags<T: Config> = StorageMap<_, Blake2_128Concat, T::Hash, BoundedVec<u8, T::MaxTagLength>>;
 
+	/// Storage mapping authors to their vectors
 	#[pallet::storage]
 	pub type AuthorVectors<T: Config> = StorageMap<
 		_,
 		Blake2_128Concat,
-		<T as frame_system::Config>::AccountId,  // Author
-		BoundedVec<T::Hash, T::MaxVectors>,  // Vector IDs
+		<T as frame_system::Config>::AccountId,
+		BoundedVec<T::Hash, T::MaxVectors>,
 	>;
 }

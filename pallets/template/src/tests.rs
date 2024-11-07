@@ -2,11 +2,13 @@ use crate::{mock::*, Error, Event, Config};
 use frame_support::{assert_noop, assert_ok, BoundedVec};
 use sp_runtime::traits::{Hash, Get};
 
-// Helper function to create a bounded vector from a regular vector
+/// Helper function to create a bounded vector from a regular vector
+/// Used throughout tests to simplify vector creation
 fn create_bounded_vec<T: Clone + std::fmt::Debug, S: Get<u32>>(v: Vec<T>) -> BoundedVec<T, S> {
     BoundedVec::try_from(v).unwrap()
 }
 
+/// Tests successful storage of weight data
 #[test]
 fn store_weight_data_works() {
     new_test_ext().execute_with(|| {
@@ -36,6 +38,7 @@ fn store_weight_data_works() {
     });
 }
 
+/// Tests failure when trying to store vector exceeding maximum length
 #[test]
 fn store_weight_data_fails_with_long_vector() {
     new_test_ext().execute_with(|| {
@@ -51,6 +54,7 @@ fn store_weight_data_fails_with_long_vector() {
     });
 }
 
+/// Tests successful retrieval of weights by tag
 #[test]
 fn get_weights_by_tag_works() {
     new_test_ext().execute_with(|| {
@@ -75,6 +79,7 @@ fn get_weights_by_tag_works() {
     });
 }
 
+/// Tests failure when searching for non-existent tag
 #[test]
 fn get_weights_by_tag_fails_for_nonexistent_tag() {
     new_test_ext().execute_with(|| {
@@ -88,6 +93,7 @@ fn get_weights_by_tag_fails_for_nonexistent_tag() {
     });
 }
 
+/// Tests successful pruning of weight data
 #[test]
 fn prune_weight_data_works() {
     new_test_ext().execute_with(|| {
@@ -121,6 +127,7 @@ fn prune_weight_data_works() {
     });
 }
 
+/// Tests failure when trying to prune with empty list
 #[test]
 fn prune_weight_data_fails_with_empty_list() {
     new_test_ext().execute_with(|| {
@@ -134,6 +141,7 @@ fn prune_weight_data_fails_with_empty_list() {
     });
 }
 
+/// Tests successful retrieval of weights by author
 #[test]
 fn get_weights_by_author_works() {
     new_test_ext().execute_with(|| {
