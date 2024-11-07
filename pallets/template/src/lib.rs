@@ -58,8 +58,11 @@ mod tests;
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
 pub mod weights;
-pub use weights::*;
-
+use weights::WeightInfo;
+use frame_support::sp_runtime::traits::Hash;
+use frame_support::BoundedVec;
+use scale_info::prelude::vec;
+use crate::vec::Vec;
 // All pallet logic is defined in its own module and must be annotated by the `pallet` attribute.
 #[frame_support::pallet]
 pub mod pallet {
@@ -67,6 +70,7 @@ pub mod pallet {
 	use super::*;
 	use frame_support::pallet_prelude::*;
 	use frame_system::pallet_prelude::*;
+	
 
 	// The `Pallet` struct serves as a placeholder to implement traits, methods and dispatchables
 	// (`Call`s) in this pallet.
@@ -84,14 +88,20 @@ pub mod pallet {
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		/// A type representing the weights required by the dispatchables of this pallet.
 		type WeightInfo: WeightInfo;
-	}
+		/// The maximum number of vectors that can be stored in the pallet.
+		#[pallet::constant]
+		type MaxVectors: Get<u32>;
+		/// Maximum length for vector data
+		#[pallet::constant]
+		type MaxVectorLength: Get<u32>;
+		/// Maximum length for tag data
+		#[pallet::constant]
+		type MaxTagLength: Get<u32>;
+		/// Maximum number of tags per vector 
+		#[pallet::constant]
+		type MaxTagsPerVector: Get<u32>;
 
-	/// A storage item for this pallet.
-	///
-	/// In this template, we are declaring a storage item called `Something` that stores a single
-	/// `u32` value. Learn more about runtime storage here: <https://docs.substrate.io/build/runtime-storage/>
-	#[pallet::storage]
-	pub type Something<T> = StorageValue<_, u32>;
+	}
 
 	/// Events that functions in this pallet can emit.
 	///
@@ -103,15 +113,18 @@ pub mod pallet {
 	///	The `generate_deposit` macro generates a function on `Pallet` called `deposit_event` which
 	/// will convert the event type of your pallet into `RuntimeEvent` (declared in the pallet's
 	/// [`Config`] trait) and deposit it using [`frame_system::Pallet::deposit_event`].
-	#[pallet::event]
+	#[pallet::event] 
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
+	
 	pub enum Event<T: Config> {
-		/// A user has successfully set a new value.
-		SomethingStored {
-			/// The new value set.
-			something: u32,
-			/// The account who set the new value.
-			who: T::AccountId,
+		/// Vector stored successfully
+		VectorStored {
+			vector_id: T::Hash,
+			author: <T as frame_system::Config>::AccountId,
+		},
+		/// Vectors pruned
+		VectorsPruned {
+			count: u32,
 		},
 	}
 
@@ -125,10 +138,18 @@ pub mod pallet {
 	/// information.
 	#[pallet::error]
 	pub enum Error<T> {
-		/// The value retrieved was `None` as no value was previously set.
-		NoneValue,
-		/// There was an attempt to increment the value in storage over `u32::MAX`.
-		StorageOverflow,
+		/// Vector not found
+		VectorNotFound,
+		/// Tag not found
+		TagNotFound,
+		/// Nothing to prune
+		NothingToPrune,
+		/// Tag exceeds maximum length
+		TagTooLong,
+		/// Maximum number of vectors reached for author
+		MaxVectorsReached,
+		/// Invalid vector data
+		InvalidVectorData,
 	}
 
 	/// The pallet's dispatchable functions ([`Call`]s).
@@ -145,58 +166,141 @@ pub mod pallet {
 	/// The [`weight`] macro is used to assign a weight to each call.
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
-		/// An example dispatchable that takes a single u32 value as a parameter, writes the value
-		/// to storage and emits an event.
-		///
-		/// It checks that the _origin_ for this call is _Signed_ and returns a dispatch
-		/// error if it isn't. Learn more about origins here: <https://docs.substrate.io/build/origins/>
+		
 		#[pallet::call_index(0)]
-		#[pallet::weight(T::WeightInfo::do_something())]
-		pub fn do_something(origin: OriginFor<T>, something: u32) -> DispatchResult {
-			// Check that the extrinsic was signed and get the signer.
-			let who = ensure_signed(origin)?;
+		#[pallet::weight(T::WeightInfo::store_weight_data(
+			weight_data.0.len() as u32,
+			tags.len() as u32
+		))]
+		pub fn store_weight_data(
+			origin: OriginFor<T>,
+			weight_data: WeightData<T>,
+			tags: Vec<Vec<u8>>,
+		) -> DispatchResult {
+			let author = ensure_signed(origin)?;
+			
+			// WASM-safe error handling using ensure!
+			ensure!(
+				weight_data.0.len() <= T::MaxVectorLength::get() as usize,
+				Error::<T>::InvalidVectorData
+			);
 
-			// Update storage.
-			Something::<T>::put(something);
+			// Generate vector ID
+			let vector_id = T::Hashing::hash_of(&weight_data);
+			
+			// Process tags
+			let mut tag_refs: BoundedVec<T::Hash, T::MaxTagsPerVector> = 
+				BoundedVec::try_from(Vec::new())
+				.expect("Empty vec should always fit bounds");
 
-			// Emit an event.
-			Self::deposit_event(Event::SomethingStored { something, who });
+			for tag_data in tags {
+				let tag_id = T::Hashing::hash_of(&tag_data);
+				let bounded_tag = BoundedVec::<u8, T::MaxTagLength>::try_from(tag_data)
+					.map_err(|_| Error::<T>::TagTooLong)?;
+				Tags::<T>::insert(tag_id, bounded_tag);
+				tag_refs.try_push(tag_id)
+					.map_err(|_| Error::<T>::TagTooLong)?;
+			}
+			
+			// Store vector
+			Vectors::<T>::insert(vector_id, weight_data);
+			
+			// Update author's vector list
+			AuthorVectors::<T>::try_mutate(author.clone(), |vectors| -> Result<(), DispatchError> {
+				match vectors {
+					Some(v) => {
+						v.try_push(vector_id)
+							.map_err(|_| Error::<T>::VectorNotFound)?;
+					},
+					None => {
+						*vectors = Some(BoundedVec::try_from(vec![vector_id])
+							.map_err(|_| Error::<T>::VectorNotFound)?);
+					},
+				}
+				Ok(())
+			})?;
 
-			// Return a successful `DispatchResult`
+			Self::deposit_event(Event::VectorStored { vector_id, author });
 			Ok(())
 		}
 
-		/// An example dispatchable that may throw a custom error.
-		///
-		/// It checks that the caller is a signed origin and reads the current value from the
-		/// `Something` storage item. If a current value exists, it is incremented by 1 and then
-		/// written back to storage.
-		///
-		/// ## Errors
-		///
-		/// The function will return an error under the following conditions:
-		///
-		/// - If no value has been set ([`Error::NoneValue`])
-		/// - If incrementing the value in storage causes an arithmetic overflow
-		///   ([`Error::StorageOverflow`])
 		#[pallet::call_index(1)]
-		#[pallet::weight(T::WeightInfo::cause_error())]
-		pub fn cause_error(origin: OriginFor<T>) -> DispatchResult {
-			let _who = ensure_signed(origin)?;
+		#[pallet::weight(T::WeightInfo::get_weights_by_tag(1))]
+		pub fn get_weights_by_tag(
+			origin: OriginFor<T>,
+			tag_data: Vec<u8>,
+		) -> DispatchResult {
+			let _caller = ensure_signed(origin)?;
+			
+			let tag_id = T::Hashing::hash_of(&tag_data);
+			ensure!(Tags::<T>::contains_key(tag_id), Error::<T>::TagNotFound);
+			
+			Ok(())
+		}
 
-			// Read a value from storage.
-			match Something::<T>::get() {
-				// Return an error if the value has not been set.
-				None => Err(Error::<T>::NoneValue.into()),
-				Some(old) => {
-					// Increment the value read from storage. This will cause an error in the event
-					// of overflow.
-					let new = old.checked_add(1).ok_or(Error::<T>::StorageOverflow)?;
-					// Update the value in storage with the incremented result.
-					Something::<T>::put(new);
-					Ok(())
-				},
+		#[pallet::call_index(2)]
+		#[pallet::weight(T::WeightInfo::get_weights_by_author(1))]
+		pub fn get_weights_by_author(
+			origin: OriginFor<T>,
+			author: <T as frame_system::Config>::AccountId,
+		) -> DispatchResult {
+			let _caller = ensure_signed(origin)?;
+			
+			ensure!(AuthorVectors::<T>::contains_key(&author), Error::<T>::VectorNotFound);
+			
+			Ok(())
+		}
+
+		#[pallet::call_index(3)]
+		#[pallet::weight(T::WeightInfo::prune_weight_data(1))]
+		pub fn prune_weight_data(
+			origin: OriginFor<T>,
+			vector_ids: Vec<T::Hash>,
+		) -> DispatchResult {
+			let _caller = ensure_signed(origin)?;
+			
+			ensure!(!vector_ids.is_empty(), Error::<T>::NothingToPrune);
+			
+			let mut pruned = 0;
+			for id in vector_ids {
+				if Vectors::<T>::take(id).is_some() {
+					pruned += 1;
+				}
 			}
+			
+			Self::deposit_event(Event::VectorsPruned { count: pruned });
+			Ok(())
 		}
 	}
+
+	// Define a type alias for the vector data structure
+	type WeightData<T> = (
+		BoundedVec<u8, <T as Config>::MaxVectorLength>,
+		<T as frame_system::Config>::AccountId,
+		BoundedVec<<T as frame_system::Config>::Hash, <T as Config>::MaxTagsPerVector>
+	);
+
+	#[pallet::storage]
+	pub type Vectors<T: Config> = StorageMap<
+		_,
+		Blake2_128Concat,
+		T::Hash,
+		WeightData<T>,
+	>;
+
+	#[pallet::storage]
+	pub type Tags<T: Config> = StorageMap<
+		_,
+		Blake2_128Concat,
+		T::Hash,
+		BoundedVec<u8, T::MaxTagLength>,
+	>;
+
+	#[pallet::storage]
+	pub type AuthorVectors<T: Config> = StorageMap<
+		_,
+		Blake2_128Concat,
+		<T as frame_system::Config>::AccountId,  // Author
+		BoundedVec<T::Hash, T::MaxVectors>,  // Vector IDs
+	>;
 }

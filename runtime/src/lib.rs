@@ -251,6 +251,10 @@ impl pallet_sudo::Config for Runtime {
 impl pallet_template::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type WeightInfo = pallet_template::weights::SubstrateWeight<Runtime>;
+	type MaxVectors = ConstU32<1000>;           // Maximum number of vectors
+	type MaxVectorLength = ConstU32<1000>;      // Maximum length of each vector
+	type MaxTagLength = ConstU32<50>;           // Maximum length of each tag
+	type MaxTagsPerVector = ConstU32<10>;       // Maximum number of tags per vector
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.

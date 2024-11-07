@@ -29,60 +29,97 @@
 #![allow(unused_parens)]
 #![allow(unused_imports)]
 
-use frame_support::{traits::Get, weights::{Weight, constants::RocksDbWeight}};
 use core::marker::PhantomData;
 
-/// Weight functions needed for pallet_template.
+use frame_support::{dispatch::DispatchResult, traits::Get, weights::{constants::RocksDbWeight, Weight}, Blake2_128Concat, StorageMap};
+use frame_support::sp_runtime::BoundedVec;
+use frame_support::pallet_prelude::{OptionQuery, IsType};
+use frame_system::{ensure_signed, Account, Event};
+
+
 pub trait WeightInfo {
-	fn do_something() -> Weight;
-	fn cause_error() -> Weight;
+	/// Weight for storing embedding data including vector, description, and tags
+	fn store_weight_data(vector_size: u32, tag_count: u32) -> Weight;
+	/// Weight for pruning old weight data
+	fn prune_weight_data(removal_count: u32) -> Weight;
+	/// Weight for retrieving weights by tag
+	fn get_weights_by_tag(result_count: u32) -> Weight;
+	/// Weight for retrieving weights by author
+	fn get_weights_by_author(result_count: u32) -> Weight;
+	/// Weight for handling weight-related errors
+	fn weight_error() -> Weight;
 }
+
+
 
 /// Weights for pallet_template using the Substrate node and recommended hardware.
 pub struct SubstrateWeight<T>(PhantomData<T>);
 impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
-	/// Storage: TemplateModule Something (r:0 w:1)
-	/// Proof: TemplateModule Something (max_values: Some(1), max_size: Some(4), added: 499, mode: MaxEncodedLen)
-	fn do_something() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `0`
-		//  Estimated: `0`
-		// Minimum execution time: 8_000_000 picoseconds.
-		Weight::from_parts(9_000_000, 0)
-			.saturating_add(T::DbWeight::get().writes(1_u64))
+	fn store_weight_data(vector_size: u32, tag_count: u32) -> Weight {
+		// Base weight for processing
+		let mut weight = Weight::from_parts(9_000_000, 0);
+		
+		// Add weight for vector size processing
+		weight = weight.saturating_add(Weight::from_parts(50_000, 0).saturating_mul(vector_size.into()));
+		
+		// Add weight for each tag
+		weight = weight.saturating_add(Weight::from_parts(100_000, 0).saturating_mul(tag_count.into()));
+		
+		// Storage operations
+		weight.saturating_add(T::DbWeight::get().writes(2_u64)) // One for vector, one for metadata
+			.saturating_add(T::DbWeight::get().writes(tag_count.into())) // One write per tag
 	}
-	/// Storage: TemplateModule Something (r:1 w:1)
-	/// Proof: TemplateModule Something (max_values: Some(1), max_size: Some(4), added: 499, mode: MaxEncodedLen)
-	fn cause_error() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `32`
-		//  Estimated: `1489`
-		// Minimum execution time: 6_000_000 picoseconds.
+
+	fn prune_weight_data(removal_count: u32) -> Weight {
+		Weight::from_parts(5_000_000, 0)
+			.saturating_add(Weight::from_parts(500_000, 0).saturating_mul(removal_count.into()))
+			.saturating_add(T::DbWeight::get().reads(removal_count.into()))
+			.saturating_add(T::DbWeight::get().writes(removal_count.into()))
+	}
+
+	fn get_weights_by_tag(result_count: u32) -> Weight {
+		Weight::from_parts(5_000_000, 0)
+			.saturating_add(Weight::from_parts(100_000, 0).saturating_mul(result_count.into()))
+			.saturating_add(T::DbWeight::get().reads(result_count.saturating_add(1).into()))
+	}
+
+	fn get_weights_by_author(result_count: u32) -> Weight {
+		Weight::from_parts(5_000_000, 0)
+			.saturating_add(Weight::from_parts(100_000, 0).saturating_mul(result_count.into()))
+			.saturating_add(T::DbWeight::get().reads(result_count.saturating_add(1).into()))
+	}
+
+	fn weight_error() -> Weight {
 		Weight::from_parts(6_000_000, 1489)
 			.saturating_add(T::DbWeight::get().reads(1_u64))
 			.saturating_add(T::DbWeight::get().writes(1_u64))
 	}
 }
 
+
 // For backwards compatibility and tests
 impl WeightInfo for () {
-	/// Storage: TemplateModule Something (r:0 w:1)
-	/// Proof: TemplateModule Something (max_values: Some(1), max_size: Some(4), added: 499, mode: MaxEncodedLen)
-	fn do_something() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `0`
-		//  Estimated: `0`
-		// Minimum execution time: 8_000_000 picoseconds.
+	fn store_weight_data(_vector_size: u32, _tag_count: u32) -> Weight {
 		Weight::from_parts(9_000_000, 0)
 			.saturating_add(RocksDbWeight::get().writes(1_u64))
 	}
-	/// Storage: TemplateModule Something (r:1 w:1)
-	/// Proof: TemplateModule Something (max_values: Some(1), max_size: Some(4), added: 499, mode: MaxEncodedLen)
-	fn cause_error() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `32`
-		//  Estimated: `1489`
-		// Minimum execution time: 6_000_000 picoseconds.
+
+	fn prune_weight_data(_removal_count: u32) -> Weight {
+		Weight::from_parts(5_000_000, 0)
+			.saturating_add(RocksDbWeight::get().writes(1_u64))
+	}
+
+	fn get_weights_by_tag(_result_count: u32) -> Weight {
+		Weight::from_parts(5_000_000, 0)
+			.saturating_add(RocksDbWeight::get().reads(1_u64))
+	}
+
+	fn get_weights_by_author(_result_count: u32) -> Weight {
+		Weight::from_parts(5_000_000, 0)
+			.saturating_add(RocksDbWeight::get().reads(1_u64))
+	}
+
+	fn weight_error() -> Weight {
 		Weight::from_parts(6_000_000, 1489)
 			.saturating_add(RocksDbWeight::get().reads(1_u64))
 			.saturating_add(RocksDbWeight::get().writes(1_u64))
